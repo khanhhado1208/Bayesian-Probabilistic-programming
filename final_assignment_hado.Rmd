@@ -295,7 +295,7 @@ parameters {
 #### 1.7 What is the point in running multiple MCMC chains when sampling from a probability distribution?
 
 ```
-Multiple chains serve multiple perposes which is used to explore MCMC convergence, and it returns an estimate of the potential scale [1, p597]. It also provides a better estimate of the posterior distribution by comparing the outputs from different starting points.
+Running multiple MCMC in order to make sure that at least one of the chain will converge to the desired posterior distribution.
 ```
 #### 1.8 When using the random walk Metropolis-Hastings algorithm, which generates proposals from a multivariate normal distribution, why does the acceptance probability reduce to the form
 <center>
@@ -313,16 +313,44 @@ r = min(1, <math>
 </center>
 #### Above, P is the target distribution, and θ<sup>∗</sup>,θ<sup>i−1</sup> the proposal and current chain values, respectively.
 
-```
-In the random walk Metropolis-Hastings algorithm, the acceptance probability depends on the ratio of the target distribution P(θ*) to the target distribution at the current sample P(θi−1). If the proposed value is higher probability, it will be accepted, or it may be rejected with probabiloty determined by the ratio
-```
+For the Metropolis-Hastings Markov chain that uses a multivariable normal distribution, we have:
+
+$$
+r = \frac{p(\theta^*) \cdot N(\theta_{i-1} \mid \theta^*)}{p(\theta_{i-1}) \cdot N(\theta^* \mid \theta_{i-1})}
+$$
+
+Due to the symmetrical property of the normal distribution, this simplifies to:
+
+$$
+r = \frac{p(\theta^*)}{p(\theta_{i-1})}
+$$
+
+In the Metropolis-Hastings Markov chain, the acceptance rate is defined as:
+
+- \(1\) if \(r > 1\)
+- \(r\) if \(r < 1\)
+
+This is equivalent to the function:
+
+$$
+\min(1, r)
+$$
+
+which is what we need to prove.
 
 #### 1.9 In Bayesian leave-one-out cross-validation, how is the effective number of parameters computed and what do the components of the formula represent?
 
-```
-In Bayesian leave-one-out cross-validation (LOO-CV), the effective number of parameters, often denoted as Peff, measures the flexibility of the model and provides an estimate of its complexity. This quantity is crucial for understanding how much the model is adapting to the data and adjusting for potential overfitting. The intraclass correlation coefficient (ICC) quantifies the proportion of the variation in the data explained by the model's parameters. Summing these coefficients gives an overall measure of the model's complexity. The effective number of parameters helps adjust for overfitting by accounting for how much the model has "adapted" to the observed data during the LOO-CV procedure. Thus, it serves as an important tool in model evaluation and selection, balancing model fit with its ability to generalize [1].
 
-```
+$$
+p = lppd - lppd_{loo-cv}
+$$
+
+Where:
+
+- \(p\): **Number of effective parameters**  
+- \(lppd\): **Log pointwise predictive distribution**  
+- \(lppd_{loo-cv}\): **Log pointwise predictive distribution of leave-one-out cross-validation**
+
 
 #### 1.10 A chicken scientist models the weight of eggs as a function of hens’ age using Gaussian processes. He specifies the model as follows:
 
@@ -334,7 +362,7 @@ In Bayesian leave-one-out cross-validation (LOO-CV), the effective number of par
 #### where f is an unknown function, σ2 variance and Σ the squared exponential covariance function with well-chosen hyperparameters. The number of data points is relative low and the scientist generates posterior predictions across a common chicken life span. However, the predictions suggest a physically impossible relationship between egg weight and hen age. What is wrong with the predictions?
 
 ```
-The problem in this case is likely related to the small number of data points. In the Gaussian Processes, small datasets can lead to overfitting, or provides a prediction with uncertainty quantification. The model may overfit the available data and extrapolate unrealistic values.
+The weight of the egg cannot be negative plus there is relatively low data points which means that some predictions can result in negative egg weight.
 ```
 
 ## 2. Grid approximation: Exponential. Consider the following statistical model:
@@ -777,10 +805,11 @@ library(MASS)
 # Load the file time_series.txt
 time_series <- scan("time_series.txt")
 
-# log-posterior function for AR(1)
-log_posterior <- function(phi, sigma) {
+# Log-posterior function for AR(1)
+log_posterior <- function(phi, log_sigma) {
+  sigma <- exp(log_sigma)  
   n <- length(time_series)
-  log_prior <- dnorm(phi, 0, 1, log = TRUE) + dgamma(sigma, 2, 2, log = TRUE)
+  log_prior <- dnorm(phi, 0, 1, log = TRUE) + dgamma(sigma, 2, 2, log = TRUE) + log_sigma
   
   log_likelihood <- sum(dnorm(time_series[-1], mean = phi * time_series[-n], sd = sigma, log = TRUE))
   
@@ -793,9 +822,9 @@ samples <- matrix(NA, ncol = 2, nrow = n_iter)
 colnames(samples) <- c("phi", "sigma")
 
 # Initialize
-n_iter <- 5000
-samples <- matrix(NA, ncol = 2, nrow = n_iter)
-colnames(samples) <- c("phi", "sigma")
+phi <- 0.5
+log_sigma <- log(1) 
+samples[1, ] <- c(phi, log_sigma)
 
 phi <- 0.5
 sigma <- 1
@@ -806,29 +835,29 @@ rejected <- 0
 
 # Sampling Loop
 for (i in 2:n_iter) {
-  proposal <- mvrnorm(1, c(phi, sigma), proposal_cov)
+  proposal <- mvrnorm(1, c(phi, log_sigma), proposal_cov)
   
-  # Check sigma > 0
-  if (proposal[2] > 0) {
-    log_acceptance_ratio <- log_posterior(proposal[1], proposal[2]) - log_posterior(phi, sigma)
-    if (log(runif(1)) < log_acceptance_ratio) {
-      phi <- proposal[1]
-      sigma <- proposal[2]
-    } else {
-      rejected <- rejected + 1
-    }
+  log_acceptance_ratio <- log_posterior(proposal[1], proposal[2]) - log_posterior(phi, log_sigma)
+  if (log(runif(1)) < log_acceptance_ratio) {
+    phi <- proposal[1]
+    log_sigma <- proposal[2]
   } else {
     rejected <- rejected + 1
   }
-  samples[i, ] <- c(phi, sigma)
+  
+  samples[i, ] <- c(phi, log_sigma)
 }
 
+# Transform log_sigma back to sigma for interpretation
+samples_transformed <- samples
+samples_transformed[, 2] <- exp(samples[, 2])
+
 # Print the result
-print(head(samples))
+print(head(samples_transformed))
 ```
 ```
 # Plot the trajectory of samples
-plot(samples[, 1], samples[, 2], type = "l", col = "blue", xlab = "phi", ylab = "sigma")
+plot(samples_transformed[, 1], samples_transformed[, 2], type = "l", col = "blue", xlab = "phi", ylab = "sigma")
 ```
 ![](ex5.png){width=80%}
 
@@ -838,8 +867,8 @@ acceptance_ratio <- accepted / n_iter
 print(paste("Acceptance Ratio:", acceptance_ratio))
 print(paste("Rejection Ratio:", rejected / n_iter))
 ```
-[1] "Acceptance Ratio: 0.0352"
-[1] "Rejection Ratio: 0.9648"
+[1] "Acceptance Ratio: 0.2714"
+[1] "Rejection Ratio: 0.7286"
 
 ## 6. Bayes factors
 ![](ex6.png){width=100%}
@@ -909,6 +938,175 @@ print(paste("Bayes Factor (Normal vs Cauchy):", bayes_factor))
 ```
 Conclusion:
 Base on the value of bayes factor 2.03 × 10⁻³³<1. This indicates decisive evidence in favor of the Cauchy model over the Normal model.
+
+## 7. Gaussian processes
+![](ex7_question.png){width=100%}
+
+#### 7.1 
+
+Stan model
+
+```
+data {
+  
+  int<lower=0> N_data;
+  
+  real x_data[N_data];
+  vector[N_data] y;
+  
+  int<lower=0> N_pred;
+  real x_pred[N_pred];
+}
+
+transformed data {
+  
+  int<lower=0> N = N_data + N_pred;
+  
+  real x[N];
+  x[1:N_data] = x_data;
+  x[(N_data+1):N] = x_pred;
+  
+  
+}
+
+parameters {
+  vector[N] eta;
+
+  real<lower=0> alpha;
+  real<lower=0> lambda;
+  real<lower=0> sigma;
+}
+
+transformed parameters {
+  
+  matrix[N, N] Sigma;
+  Sigma = cov_exp_quad(x, alpha, lambda);
+  
+  // Add nugget on diagonal
+  Sigma = Sigma + diag_matrix(rep_vector(1e-6, N));
+  matrix[N, N] L = cholesky_decompose(Sigma);
+  
+  vector[N] f;
+  
+  f = L*eta;
+}
+
+model {
+  
+  // Likelihood
+  y ~ normal(f[1:N_data], sigma); 
+  
+  // GP prior
+  //f ~ multi_normal(rep_vector(0, N), Sigma);
+  
+  eta ~ normal(0, 1);
+  
+  alpha ~ gamma(2, 1);
+  lambda ~ normal(500, 50);
+  sigma ~ gamma(2, 1);
+  
+}
+
+generated quantities {
+   
+  vector[N] exp_f;
+   exp_f = exp(f);
+} 
+```
+
+Because the value of x are far away from each others and f is log circumference (meaning small fluctuation in f can result in massive change in circumference), we increase the scale factor lambda in squared exponential covariance kernel. Specifically, we set the distribution of lambda to be normal(500,50). We also add exp_f to the transformed parameter section in order to plot the exp(f) distribution.
+
+```
+library(ggplot2)
+library(rstan)
+theme_set(theme_bw(20))
+
+okabi_colors <- c("#E69F00", "#56B4E9", "#009E73")
+
+prior_color <- "#009E73"
+likelihood_color <- "#E69F00"
+posterior_color <- "#56B4E9"
+
+data <- read.csv("data7.txt", header=TRUE, stringsAsFactors=FALSE)
+
+data$log_circumference <- log(data$circumference)
+
+x_pred <- seq(118, 1582, length.out = 100)
+x_pred <-c(x_pred,730)
+
+gp_model <- stan_model("my_gp.stan")
+
+gp_samples <- sampling(gp_model,
+                       list(N_data = nrow(data),
+                            x_data = as.array(data$age),
+                            y = as.array(data$log_circumference),
+                            N_pred = length(x_pred),
+                            x_pred = x_pred,
+                            lambda = 1,
+                            alpha = 0.5,
+                            sigma = 0.1
+                            ),
+                       chains = 1, iter = 2000)
+                       
+f_samples <- rstan::extract(gp_samples, "f")[["f"]] %>% 
+  t %>% data.frame() %>% 
+  mutate(x = c(data$age, x_pred))
+  
+exp_f_samples <- rstan::extract(gp_samples, "exp_f")[["exp_f"]] %>% 
+  t %>% data.frame() %>% 
+  mutate(x = c(data$age, x_pred))
+  
+f_samples <- f_samples %>% 
+  gather(key = "sample", value = "f", -x) 
+
+exp_f_samples <- exp_f_samples %>% 
+  gather(key = "sample", value = "exp_f", -x) 
+  
+```
+Plotting posterior distribution of f
+```
+ggplot() +
+  geom_line(
+    data = f_samples,
+    aes(x = x, y = f, group = sample),
+    alpha = 0.01) +
+  geom_point(data = data, 
+             aes(x = age, y = log_circumference), color ="red") 
+```
+![](7-1.png){width=80%}
+
+#### 7.2
+Calculating posterior average and variance circumference at 730 days
+
+```
+df1 <- exp_f_samples %>% 
+  filter(
+    x == 730
+    )
+df1 <- df1 %>% select(exp_f)
+    
+#Calculate posterior mean
+
+mean <- sum(df1)/length(df1[,1]);
+
+#calculate posterior variance
+
+variance <- sum((df1-mean)^2)/length(df1[,1]);
+```
+#### 7.3
+Plotting posterior distribution of exp(f)
+
+```
+ggplot() +
+  geom_line(
+    data = exp_f_samples,
+    aes(x = x, y = exp_f, group = sample),
+    alpha = 0.01) +
+  geom_point(data = data, 
+             aes(x = age, y = circumference), color ="red")+
+  geom_hline(yintercept=mean)
+```
+![](7-2.png){width=80%}
 
 ## References:     
 #### 1. Bayesian Data Analysis, Third Edition.
